@@ -16,11 +16,82 @@ const {ccclass, property} = cc._decorator;
 
 @ccclass
 export default class Q2 extends cc.Component {
+
     public async onStartBtnClick() {
-        // TODO: 请在此处开始作答
+        try {
+            const files = await this.loadConfig();
+            await this.loadFilesWithConcurrency(files, 3);
+            await this.initSystem();
+            console.log('All done');
+        } catch (err) {
+            console.error('Error in start process:', err);
+        }
     }
 
-    // #region 以下是辅助测试题而写的一些 mock 函数，请勿修改
+    private async loadFileWithRetry(file: string, retries = 3, timeout = 5000): Promise<void> {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                await this.promiseWithTimeout(this.loadFile(file), timeout);
+                return;
+            } catch (err) {
+                console.warn(`File ${file} attempt ${attempt} failed:`, err);
+                if (attempt === retries) {
+                    console.error(`File ${file} failed after ${retries} retries`);
+                    throw err;
+                }
+                await new Promise(res => setTimeout(res, 500 * attempt));
+            }
+        }
+    }
+
+    private promiseWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                reject(new Error('timeout'));
+            }, ms);
+
+            promise.then(res => {
+                clearTimeout(timer);
+                resolve(res);
+            }).catch(err => {
+                clearTimeout(timer);
+                reject(err);
+            });
+        });
+    }
+    
+    private async loadFilesWithConcurrency(files: string[], concurrency: number) {
+        return new Promise<void>((resolve, reject) => {
+            let index = 0;
+            let active = 0;
+            let hasError = false;
+
+            const next = () => {
+                if (hasError) return;
+
+                if (index >= files.length && active === 0) {
+                    resolve();
+                    return;
+                }
+
+                while (active < concurrency && index < files.length) {
+                    const file = files[index++];
+                    active++;
+                    this.loadFileWithRetry(file)
+                        .catch(err => {
+                            hasError = true;
+                            reject(err);
+                        })
+                        .finally(() => {
+                            active--;
+                            next();
+                        });
+                }
+            };
+
+            next();
+        });
+    }
 
     /**
      * 加载配置文件
